@@ -659,17 +659,25 @@ function drawToast() {
   ctx.restore();
 }
 
+// Кеш градиентов: создаём один раз и переиспользуем каждый кадр. Без этого
+// на уровнях с десятками блоков/шаров пересоздание градиентов сильно тормозит.
+let _bgGrad = null, _sunGrad = null, _sawGrad = null;
+const _blockGrads = {};   // по высоте блока
+const _voidGrads = {};    // по "y_h"
+const _balloonGrads = {}; // по цвету
+
 function drawBackground() {
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, "#3a4d70");
-  g.addColorStop(1, "#222c40");
-  ctx.fillStyle = g;
+  if (!_bgGrad) {
+    _bgGrad = ctx.createLinearGradient(0, 0, 0, H);
+    _bgGrad.addColorStop(0, "#3a4d70");
+    _bgGrad.addColorStop(1, "#222c40");
+    _sunGrad = ctx.createRadialGradient(W * 0.5, -60, 30, W * 0.5, -60, 360);
+    _sunGrad.addColorStop(0, "rgba(255,225,160,0.35)");
+    _sunGrad.addColorStop(1, "rgba(255,225,160,0)");
+  }
+  ctx.fillStyle = _bgGrad;
   ctx.fillRect(0, 0, W, H);
-  // мягкое свечение сверху
-  const sun = ctx.createRadialGradient(W * 0.5, -60, 30, W * 0.5, -60, 360);
-  sun.addColorStop(0, "rgba(255,225,160,0.35)");
-  sun.addColorStop(1, "rgba(255,225,160,0)");
-  ctx.fillStyle = sun;
+  ctx.fillStyle = _sunGrad;
   ctx.fillRect(0, 0, W, H);
 }
 
@@ -694,9 +702,14 @@ function drawVoidShape(x, y, w, h) {
   ctx.lineTo(x + w, y + h);
   ctx.lineTo(x, y + h);
   ctx.closePath();
-  const g = ctx.createLinearGradient(0, y, 0, y + h);
-  g.addColorStop(0, "#0b0e16");
-  g.addColorStop(1, "#05070c");
+  const vk = y + "_" + h;
+  let g = _voidGrads[vk];
+  if (!g) {
+    g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, "#0b0e16");
+    g.addColorStop(1, "#05070c");
+    _voidGrads[vk] = g;
+  }
   ctx.fillStyle = g;
   ctx.fill();
   ctx.strokeStyle = "rgba(120,150,200,0.25)";
@@ -707,10 +720,15 @@ function drawVoidShape(x, y, w, h) {
 
 function drawBlock(r) {
   ctx.save();
-  const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
-  g.addColorStop(0, "#7d8aa8");
-  g.addColorStop(1, "#4a5573");
-  roundRect(r.x, r.y, r.w, r.h, 8);
+  ctx.translate(r.x, r.y);
+  let g = _blockGrads[r.h];
+  if (!g) {
+    g = ctx.createLinearGradient(0, 0, 0, r.h);
+    g.addColorStop(0, "#7d8aa8");
+    g.addColorStop(1, "#4a5573");
+    _blockGrads[r.h] = g;
+  }
+  roundRect(0, 0, r.w, r.h, 8);
   ctx.fillStyle = g;
   ctx.fill();
   ctx.lineWidth = 3;
@@ -718,38 +736,43 @@ function drawBlock(r) {
   ctx.stroke();
   // блик сверху
   ctx.fillStyle = "rgba(255,255,255,0.18)";
-  roundRect(r.x + 4, r.y + 4, r.w - 8, Math.min(8, r.h - 8), 4);
+  roundRect(4, 4, r.w - 8, Math.min(8, r.h - 8), 4);
   ctx.fill();
   ctx.restore();
 }
 
 function drawBalloon(b) {
   const sway = Math.sin(b.phase) * 3;
-  const x = b.x + sway, y = b.y;
+  let c = _balloonGrads[b.color];
+  if (!c) {
+    const g = ctx.createRadialGradient(-5, -6, 3, 0, 0, BALLOON_R + 3);
+    g.addColorStop(0, "#ffffff");
+    g.addColorStop(0.25, b.color);
+    g.addColorStop(1, shade(b.color, -0.25));
+    c = { body: g, knot: shade(b.color, -0.2) };
+    _balloonGrads[b.color] = c;
+  }
   ctx.save();
-  // нить
+  ctx.translate(b.x + sway, b.y);
+  // нить (нижний конец привязан без качания)
   ctx.beginPath();
-  ctx.moveTo(x, y + b.r);
-  ctx.quadraticCurveTo(x + sway * 1.5, y + b.r + 18, x - sway, y + b.r + 34);
+  ctx.moveTo(0, b.r);
+  ctx.quadraticCurveTo(1.5 * sway, b.r + 18, -sway, b.r + 34);
   ctx.strokeStyle = "rgba(255,255,255,0.4)";
   ctx.lineWidth = 1.5;
   ctx.stroke();
   // тело шара
-  const g = ctx.createRadialGradient(x - 5, y - 6, 3, x, y, b.r + 3);
-  g.addColorStop(0, "#ffffff");
-  g.addColorStop(0.25, b.color);
-  g.addColorStop(1, shade(b.color, -0.25));
   ctx.beginPath();
-  ctx.ellipse(x, y, b.r, b.r + 3, 0, 0, Math.PI * 2);
-  ctx.fillStyle = g;
+  ctx.ellipse(0, 0, b.r, b.r + 3, 0, 0, Math.PI * 2);
+  ctx.fillStyle = c.body;
   ctx.fill();
   // узелок
   ctx.beginPath();
-  ctx.moveTo(x - 4, y + b.r + 2);
-  ctx.lineTo(x + 4, y + b.r + 2);
-  ctx.lineTo(x, y + b.r + 7);
+  ctx.moveTo(-4, b.r + 2);
+  ctx.lineTo(4, b.r + 2);
+  ctx.lineTo(0, b.r + 7);
   ctx.closePath();
-  ctx.fillStyle = shade(b.color, -0.2);
+  ctx.fillStyle = c.knot;
   ctx.fill();
   ctx.restore();
 }
@@ -770,10 +793,12 @@ function drawSaw(s) {
     ctx.lineTo(Math.cos(a2) * SAW_R, Math.sin(a2) * SAW_R);
   }
   ctx.closePath();
-  const g = ctx.createRadialGradient(0, 0, 4, 0, 0, SAW_R + 5);
-  g.addColorStop(0, "#eef2ff");
-  g.addColorStop(1, "#9aa6c4");
-  ctx.fillStyle = g;
+  if (!_sawGrad) {
+    _sawGrad = ctx.createRadialGradient(0, 0, 4, 0, 0, SAW_R + 5);
+    _sawGrad.addColorStop(0, "#eef2ff");
+    _sawGrad.addColorStop(1, "#9aa6c4");
+  }
+  ctx.fillStyle = _sawGrad;
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = "#3a4258";
@@ -879,23 +904,28 @@ function shade(hex, amt) {
 }
 
 // ---------- Главный цикл ----------
+// В портретной ориентации на телефоне (показана заглушка «поверни телефон»)
+// рендер ставим на паузу — экономим заряд и не считаем впустую.
+const blockMQ = window.matchMedia("(hover: none) and (orientation: portrait) and (max-width: 900px)");
 function loop() {
-  update();
-  render();
+  if (!blockMQ.matches) { update(); render(); }
   requestAnimationFrame(loop);
 }
 
-// ---------- Масштаб под экран (Retina) ----------
+// ---------- Масштаб под экран ----------
 function fitCanvas() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  // на тач-устройствах ограничиваем плотность пикселей — меньше нагрузка
+  const touch = window.matchMedia("(hover: none)").matches;
+  const dpr = Math.min(window.devicePixelRatio || 1, touch ? 1.5 : 2);
   canvas.width = W * dpr;
   canvas.height = H * dpr;
-  canvas.style.aspectRatio = W + " / " + H;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 fitCanvas();
 window.addEventListener("resize", fitCanvas);
+window.addEventListener("orientationchange", fitCanvas);
+if (blockMQ.addEventListener) blockMQ.addEventListener("change", fitCanvas);
 // есть сохранённый прогресс — предлагаем «Продолжить»
 if (loadProgress() > 0) document.getElementById("startBtn").textContent = "Продолжить";
 loop();

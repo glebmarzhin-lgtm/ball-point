@@ -21,18 +21,21 @@ html, body {
 
 #game {
   position: relative;
-  width: min(100vw, 960px);
-  margin: 0 auto;
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
+/* канвас вписывается в экран целиком в любой ориентации (ширина = минимум из
+   ширины экрана, 960px и ширины, при которой высота равна высоте экрана) */
 #c {
-  width: 100%;
+  width: min(100vw, 960px, calc(100vh * 1.6));
+  width: min(100vw, 960px, calc(100dvh * 1.6));
   height: auto;
-  max-height: 100%;
+  aspect-ratio: 960 / 600;
   display: block;
   border-radius: 16px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
@@ -216,4 +219,37 @@ html, body {
   font-family: ui-monospace, Menlo, monospace; font-size: 13px;
   background: rgba(8, 12, 20, 0.82); color: #cfe5ff;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+/* ---- Заглушка «поверни телефон» (только портретные телефоны) ---- */
+#rotate { display: none; }
+.rot-icon {
+  font-size: 72px;
+  line-height: 1;
+  display: inline-block;
+  animation: rothint 1.8s ease-in-out infinite;
+}
+.rot-inner p {
+  margin-top: 22px;
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1.4;
+  color: var(--text);
+}
+@keyframes rothint {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-90deg); }
+}
+@media (hover: none) and (orientation: portrait) and (max-width: 900px) {
+  #rotate {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    background: radial-gradient(120% 90% at 50% 0%, #3b3550, #181425 72%);
+  }
 }
