@@ -14,6 +14,7 @@ const MAX_PULL = 185;   // макс. натяжение рогатки (px)
 const SAW_R = 19;       // радиус пилы
 const BALLOON_R = 17;   // радиус шара
 const PREVIEW_STEPS = 26; // длина предпросмотра траектории (меньше = сложнее целиться)
+const SAVE_KEY = "ballpoint.level"; // localStorage: на каком уровне игрок остановился
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -123,6 +124,18 @@ const LEVELS = [
     blocks: [ { x: 420, y: 120, w: 26, h: 200 }, { x: 420, y: 380, w: 26, h: 200 } ],
     voids: [],
   },
+
+  // ===== Уровни 11–20 (коды из редактора, сделаны игроком) =====
+  "A3mbrB64a29tcmdt9qh76ykp8fK6edd9i09fo950c4fft98670aln690834058ubp08bl65a90abp6d082h", // 11
+  "A3z9dB9f3rf93nlb3rj16vcp6x9q9hl4achvdbfnabK4c1lj90n7u4ycs0jn1230f6kak7zco0k7z5f0h6m8ebiby0en58d0f6jfreb7h0hfpbp0e2s", // 12
+  "A3w96B7z6mau51di48hibiK1p7t0d5e23cjhd0dcu6e0m4nj50w09by", // 13
+  "Ad4dcBcbate276c13vhu1vKbb350hbkem330gbget344v0hj7020b36bc000d3q", // 14
+  "A3w96Bdq9xKbm234l0ubo2u0q3tbo604h0mfg680p5pbxb7420o7bbe3j0q695n0s0r6x4s0p0z7h3v0s0x82300q0z8n1z0m9f", // 15
+  "A9v2aB58326t6i5f9gK42210hcc4ddt3o0m7k000de6V4jd2310w", // 16
+  "A3w96Bag7eq85jK9cemg30o9e5q0h93gy3s0l6w", // 17
+  "A3w96B5x896k8676837w838j7z987ya07zap7ybh7vca7xd07zdr82ej84fc86g686gv8chr8gio8ojj8tkf90lf99md9ln69vnxa9oyanpqb1q9bwprcjp4ctoed8n9dunrdmmhecllewl4f93d9e47904y8m12ab1pa1299t2u9l", // 18
+  "A3w96Bh92cK6g7j15187f8m171d8b9nba18j68d151jk47a13198r281p1ygc3d211xV01e2qn2i", // 19
+  "A3w96B588x6j8c8r7o7h7x9u7jb17eca7edi7del79fk77K4a190k504p1c200l4r331o0h872d0j3t861b0k0jam130j4vb5170l1obq2v0k1kca4c0j11cu0x0k4sew2d0m32ex130i0lgk112k0fgm190i22gp2u2e0eik300h2ogq52270kky0q0e4sl92m270fna0m0e4tam8z300ed0990k2iatb62l0kaxbc0b1sb3cm2i0gf88v0g3uer8w0h10evcb1b0hhc970d3khmcd0x09j193083lj7971a0ej7af140ej7c50z0gku980c27l3bd0f13lh9d0e22m9950838mf92180jmgag140amgbw150col8y0h39oybr0z0cea9t0g15dtdp1v0cdxdt0810e5en1b08f7ew0d0ue0fg1f0bg9di081ygddj1b0chddr0b1nggf3130aifdl0a1tikdn1509jfds091likf41408kgdj081rkmdm0e10kyek0f0kledq091gmfeu0k0kncez0q0fodez0p0g", // 20
 ];
 
 // ---------- Компактный код уровня ----------
@@ -189,7 +202,7 @@ const balloonLabel = document.getElementById("balloonLabel").querySelector("span
 document.getElementById("startBtn").addEventListener("click", () => {
   overlay.classList.remove("show");
   overlay.classList.add("hidden");
-  loadLevel(0);
+  loadLevel(loadProgress());
 });
 document.getElementById("restartBtn").addEventListener("click", () => {
   if (game.testing) loadLevelData(editor.level);
@@ -219,7 +232,15 @@ const len = (x, y) => Math.hypot(x, y);
 function loadLevel(i) {
   game.levelIndex = i;
   game.testing = false;
+  try { localStorage.setItem(SAVE_KEY, String(i)); } catch (e) {}
   loadLevelData(codeToLevel(LEVELS[i]));
+}
+
+// прогресс игрока (последний открытый уровень) из localStorage
+function loadProgress() {
+  let i = 0;
+  try { i = parseInt(localStorage.getItem(SAVE_KEY), 10) || 0; } catch (e) {}
+  return clamp(i, 0, LEVELS.length - 1);
 }
 
 function loadLevelData(lv) {
@@ -875,4 +896,6 @@ function fitCanvas() {
 
 fitCanvas();
 window.addEventListener("resize", fitCanvas);
+// есть сохранённый прогресс — предлагаем «Продолжить»
+if (loadProgress() > 0) document.getElementById("startBtn").textContent = "Продолжить";
 loop();
