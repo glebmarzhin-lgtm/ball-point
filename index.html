@@ -15,7 +15,6 @@
       <div class="hud-item" id="levelLabel">Уровень 1</div>
       <div class="hud-item" id="balloonLabel">🎈 <span>0</span></div>
       <button id="restartBtn" title="Начать уровень заново">↻</button>
-      <button id="backToEdBtn" class="hidden" title="Вернуться в редактор">← Редактор</button>
     </div>
 
     <div id="overlay" class="panel show">
@@ -28,35 +27,12 @@
         <li>🕳️ Промах или падение в <b>пустоту</b> — шары вернутся, пробуй снова.</li>
       </ul>
       <button class="btn" id="startBtn">Играть</button>
-      <button class="btn ghost" id="editorBtn">✏️ Редактор уровней</button>
     </div>
 
     <div id="message" class="panel hidden">
       <h2 id="msgTitle">Готово!</h2>
       <p id="msgText"></p>
       <button class="btn" id="msgBtn">Дальше</button>
-    </div>
-
-    <div id="editorUI" class="hidden">
-      <div id="edTopbar">
-        <div id="edTools">
-          <button class="edtool active" data-tool="balloon">🎈 Шар</button>
-          <button class="edtool" data-tool="block">🧱 Блок</button>
-          <button class="edtool" data-tool="void">🕳️ Пустота</button>
-          <button class="edtool" data-tool="anchor">🎯 Рогатка</button>
-          <button class="edtool" data-tool="erase">🗑 Стереть</button>
-        </div>
-        <button id="edMenu" class="edbtn">← Меню</button>
-      </div>
-      <div id="edBottom">
-        <textarea id="edText" spellcheck="false" placeholder="код уровня появится здесь — копируй и присылай мне"></textarea>
-        <div id="edBtns">
-          <button id="edCopy" class="edbtn">📋 Копировать</button>
-          <button id="edLoad" class="edbtn">⬇ Вставить</button>
-          <button id="edClear" class="edbtn">Очистить</button>
-          <button id="edTest" class="edbtn primary">▶ Тест</button>
-        </div>
-      </div>
     </div>
   </div>
 

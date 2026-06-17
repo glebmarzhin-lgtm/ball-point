@@ -103,6 +103,26 @@ const LEVELS = [
     blocks: [ { x: 470, y: 180, w: 30, h: 340 } ],
     voids: [],
   },
+  // 9 — две ступени-полки: пила скачет по ним через всё поле.
+  {
+    anchor: { x: 140, y: 300 },
+    balloons: [
+      { x: 297, y: 124 }, { x: 430, y: 35 }, { x: 585, y: 156 },
+      { x: 739, y: 188 }, { x: 892, y: 104 }, { x: 820, y: 34 },
+    ],
+    blocks: [ { x: 340, y: 360, w: 170, h: 26 }, { x: 560, y: 250, w: 170, h: 26 } ],
+    voids: [],
+  },
+  // 10 — стена с проёмом-воронкой: рикошет уводит вверх-влево.
+  {
+    anchor: { x: 140, y: 330 },
+    balloons: [
+      { x: 235, y: 268 }, { x: 329, y: 212 }, { x: 400, y: 175 },
+      { x: 332, y: 121 }, { x: 245, y: 78 }, { x: 160, y: 45 },
+    ],
+    blocks: [ { x: 420, y: 120, w: 26, h: 200 }, { x: 420, y: 380, w: 26, h: 200 } ],
+    voids: [],
+  },
 ];
 
 // ---------- Компактный код уровня ----------
@@ -177,16 +197,19 @@ document.getElementById("restartBtn").addEventListener("click", () => {
 });
 msgBtn.addEventListener("click", onMsgButton);
 
-// кнопки редактора
-document.getElementById("editorBtn").addEventListener("click", enterEditor);
-document.getElementById("edMenu").addEventListener("click", exitEditorToMenu);
-document.getElementById("edTest").addEventListener("click", editorTest);
-document.getElementById("edClear").addEventListener("click", editorClear);
-document.getElementById("edCopy").addEventListener("click", editorCopy);
-document.getElementById("edLoad").addEventListener("click", editorLoadFromText);
-document.getElementById("backToEdBtn").addEventListener("click", backToEditor);
-for (const btn of document.querySelectorAll(".edtool"))
-  btn.addEventListener("click", () => editorSetTool(btn.dataset.tool));
+// кнопки редактора — подключаются только если DOM редактора есть на странице
+// (его содержит локальный editor.html; в опубликованном index.html редактора нет).
+if (document.getElementById("editorBtn")) {
+  document.getElementById("editorBtn").addEventListener("click", enterEditor);
+  document.getElementById("edMenu").addEventListener("click", exitEditorToMenu);
+  document.getElementById("edTest").addEventListener("click", editorTest);
+  document.getElementById("edClear").addEventListener("click", editorClear);
+  document.getElementById("edCopy").addEventListener("click", editorCopy);
+  document.getElementById("edLoad").addEventListener("click", editorLoadFromText);
+  document.getElementById("backToEdBtn").addEventListener("click", backToEditor);
+  for (const btn of document.querySelectorAll(".edtool"))
+    btn.addEventListener("click", () => editorSetTool(btn.dataset.tool));
+}
 
 // ---------- Утилиты ----------
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
