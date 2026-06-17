@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Ball Point — лопни все шары пилой</title>
+  <meta name="description" content="Ball Point — натяни рогатку, запусти крутящуюся пилу и лопни все шары. Отскакивай от блоков и не упади в пустоту!" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="game">
+    <canvas id="c"></canvas>
+
+    <div id="hud">
+      <div class="hud-item" id="levelLabel">Уровень 1</div>
+      <div class="hud-item" id="balloonLabel">🎈 <span>0</span></div>
+      <button id="restartBtn" title="Начать уровень заново">↻</button>
+    </div>
+
+    <div id="overlay" class="panel show">
+      <h1>Ball&nbsp;Point</h1>
+      <p class="tag">Лопни все шары крутящейся пилой</p>
+      <ul class="rules">
+        <li>🎯 Тяни <b>рогатку</b> назад и отпусти — сила натяжения = дальность полёта.</li>
+        <li>⚙️ Пила <b>отскакивает</b> от блоков и стен.</li>
+        <li>🎈 Лопни <b>все шары за один бросок</b>!</li>
+        <li>🕳️ Промах или падение в <b>пустоту</b> — шары вернутся, пробуй снова.</li>
+      </ul>
+      <button class="btn" id="startBtn">Играть</button>
+    </div>
+
+    <div id="message" class="panel hidden">
+      <h2 id="msgTitle">Готово!</h2>
+      <p id="msgText"></p>
+      <button class="btn" id="msgBtn">Дальше</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
