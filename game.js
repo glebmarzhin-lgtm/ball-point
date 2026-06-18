@@ -258,20 +258,17 @@ function loadProgress() {
   return clamp(i, 0, LEVELS.length - 1);
 }
 
-// дозагрузка уровней игрока из levels.txt — по одному коду на строку,
+// уровни игрока из levels.js (window.USER_LEVELS) — по одному коду на строку,
 // можно с подписью слева (берём первый код вида A...); строки с # пропускаем.
-async function loadUserLevels() {
-  try {
-    const res = await fetch("levels.txt?cb=" + Date.now());
-    if (!res.ok) return;
-    const text = await res.text();
-    for (let line of text.split("\n")) {
-      line = line.trim();
-      if (!line || line[0] === "#") continue;
-      const m = line.match(/A[0-9a-zABKVRP]{6,}/);
-      if (m) LEVELS.push(m[0]);
-    }
-  } catch (e) { /* локально (file://) fetch недоступен — это нормально */ }
+// Грузится тегом <script>, поэтому работает и локально (file://), и на сайте.
+function loadUserLevels() {
+  const text = window.USER_LEVELS || "";
+  for (let line of text.split("\n")) {
+    line = line.trim();
+    if (!line || line[0] === "#") continue;
+    const m = line.match(/A[0-9a-zABKVRP]{6,}/);
+    if (m) LEVELS.push(m[0]);
+  }
 }
 
 function loadLevelData(lv) {
@@ -1123,16 +1120,12 @@ fitCanvas();
 window.addEventListener("resize", fitCanvas);
 window.addEventListener("orientationchange", fitCanvas);
 if (blockMQ.addEventListener) blockMQ.addEventListener("change", fitCanvas);
-loop();
-
-// сначала дозагружаем уровни игрока из levels.txt, затем авто-продолжение
-// (чтобы прогресс на пользовательских уровнях считался правильно).
+// уровни игрока из levels.js, затем авто-продолжение с сохранённого уровня.
 // На editor.html (есть #editorBtn) стартовое меню всегда оставляем.
-(async function init() {
-  await loadUserLevels();
-  if (!document.getElementById("editorBtn") && loadProgress() > 0) {
-    overlay.classList.remove("show");
-    overlay.classList.add("hidden");
-    loadLevel(loadProgress());
-  }
-})();
+loadUserLevels();
+if (!document.getElementById("editorBtn") && loadProgress() > 0) {
+  overlay.classList.remove("show");
+  overlay.classList.add("hidden");
+  loadLevel(loadProgress());
+}
+loop();

@@ -1,1 +1,0 @@
-cd "/Users/gleb/Desktop/Ball point" && git add -A && git commit -m "обновление" && git push
