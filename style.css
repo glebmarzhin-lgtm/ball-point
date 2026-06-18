@@ -253,3 +253,19 @@ html, body {
     background: radial-gradient(120% 90% at 50% 0%, #3b3550, #181425 72%);
   }
 }
+
+/* ---- Компактное меню на коротких/ландшафтных экранах (телефон) ---- */
+@media (max-height: 540px) {
+  .panel { padding: 14px 24px 16px; max-height: 96%; border-radius: 20px; }
+  .panel h1 { font-size: 30px; }
+  .panel h2 { font-size: 26px; }
+  .tag { margin: 2px 0 10px; font-size: 13px; }
+  .rules { gap: 6px; margin-bottom: 12px; }
+  .rules li { font-size: 12.5px; gap: 9px; line-height: 1.25; }
+  .rules .ic { width: 28px; height: 28px; font-size: 15px; border-radius: 8px; }
+  #msgText { margin-bottom: 14px; font-size: 14px; }
+  .btn { padding: 10px 30px; font-size: 15px; border-radius: 14px; }
+  #hud { top: 7px; gap: 7px; }
+  .hud-item { padding: 5px 11px; font-size: 13px; }
+  #restartBtn { width: 32px; height: 32px; font-size: 15px; }
+}

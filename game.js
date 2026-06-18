@@ -15,6 +15,8 @@ const SAW_R = 19;       // радиус пилы
 const BALLOON_R = 17;   // радиус шара
 const PREVIEW_STEPS = 26; // длина предпросмотра траектории (меньше = сложнее целиться)
 const SAVE_KEY = "ballpoint.level"; // localStorage: на каком уровне игрок остановился
+const ACCEL_FORCE = 0.8;   // сила ускорителя за кадр (≈2× гравитации)
+const ACCEL_FRAMES = 30;   // ~0.5 c левитации после касания ускорителя
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -140,29 +142,40 @@ const LEVELS = [
 
 // ---------- Компактный код уровня ----------
 // Числа — base36 фиксированной ширины (2 символа = 0..1295). Маркеры секций —
-// заглавные буквы (их нет в base36): A=рогатка, B=шары, K=блоки, V=пустоты.
+// заглавные (их нет в base36): A=рогатка, B=шары, K=блоки, V=пустоты,
+// R=повёрнутые/крутящиеся блоки (x,y,w,h,угол°,кручение), P=ускорители (x,y,w,h,направление°).
 function enc2(n) { return clamp(Math.round(n), 0, 1295).toString(36).padStart(2, "0"); }
-function isMarker(c) { return c === "A" || c === "B" || c === "K" || c === "V"; }
+function isMarker(c) { return "ABKVRP".indexOf(c) >= 0; }
+function rotDeg(rad) { return ((Math.round((rad || 0) * 180 / Math.PI) % 360) + 360) % 360; }
+function spinEnc(spin) { return clamp(Math.round((spin || 0) * 1000) + 600, 0, 1295); }
+function spinDec(n) { return (n - 600) / 1000; }
 
 function encodeLevel(L) {
+  const plain = L.blocks.filter((b) => !b.rot && !b.spin);
+  const rotated = L.blocks.filter((b) => b.rot || b.spin);
   let s = "A" + enc2(L.anchor.x) + enc2(L.anchor.y) + "B";
   for (const b of L.balloons) s += enc2(b.x) + enc2(b.y);
-  if (L.blocks.length) { s += "K"; for (const r of L.blocks) s += enc2(r.x) + enc2(r.y) + enc2(r.w) + enc2(r.h); }
+  if (plain.length) { s += "K"; for (const r of plain) s += enc2(r.x) + enc2(r.y) + enc2(r.w) + enc2(r.h); }
   if (L.voids.length) { s += "V"; for (const v of L.voids) s += enc2(v.x) + enc2(v.y) + enc2(v.w) + enc2(v.h); }
+  if (rotated.length) { s += "R"; for (const r of rotated) s += enc2(r.x) + enc2(r.y) + enc2(r.w) + enc2(r.h) + enc2(rotDeg(r.rot)) + enc2(spinEnc(r.spin)); }
+  if (L.accels && L.accels.length) { s += "P"; for (const a of L.accels) s += enc2(a.x) + enc2(a.y) + enc2(a.w) + enc2(a.h) + enc2(rotDeg(a.dir)); }
   return s;
 }
 
 function decodeLevel(code) {
   code = code.replace(/\s+/g, "");
-  const L = { anchor: { x: 140, y: 330 }, balloons: [], blocks: [], voids: [] };
+  const L = { anchor: { x: 140, y: 330 }, balloons: [], blocks: [], voids: [], accels: [] };
   let i = 0;
   const num = () => { const v = parseInt(code.substr(i, 2), 36); i += 2; return v; };
+  const D = Math.PI / 180;
   while (i < code.length) {
     const m = code[i++];
     if (m === "A") { L.anchor = { x: num(), y: num() }; }
     else if (m === "B") { while (i + 4 <= code.length && !isMarker(code[i])) L.balloons.push({ x: num(), y: num() }); }
     else if (m === "K") { while (i + 8 <= code.length && !isMarker(code[i])) L.blocks.push({ x: num(), y: num(), w: num(), h: num() }); }
     else if (m === "V") { while (i + 8 <= code.length && !isMarker(code[i])) L.voids.push({ x: num(), y: num(), w: num(), h: num() }); }
+    else if (m === "R") { while (i + 12 <= code.length && !isMarker(code[i])) { const x = num(), y = num(), w = num(), h = num(), rd = num(), sp = num(); L.blocks.push({ x, y, w, h, rot: rd * D, spin: spinDec(sp) }); } }
+    else if (m === "P") { while (i + 10 <= code.length && !isMarker(code[i])) { const x = num(), y = num(), w = num(), h = num(), dd = num(); L.accels.push({ x, y, w, h, dir: dd * D }); } }
     else break;
   }
   return L;
@@ -178,8 +191,10 @@ const game = {
   balloons: [],
   blocks: [],
   voids: [],
-  saw: null,        // {x,y,vx,vy,angle}
+  accels: [],       // ускорители {x,y,w,h,dir}
+  saw: null,        // {x,y,vx,vy,angle,accelT,accelDir}
   aiming: false,
+  dragStart: { x: 0, y: 0 }, // точка начала жеста (тянем откуда угодно)
   pull: { x: 0, y: 0 },   // вектор натяжения (от anchor к точке захвата)
   particles: [],
   toast: null,      // {text, life}
@@ -249,8 +264,9 @@ function loadLevelData(lv) {
     x: b.x, y: b.y, r: BALLOON_R, popped: false,
     color: PALETTE[idx % PALETTE.length], phase: Math.random() * Math.PI * 2,
   }));
-  game.blocks = lv.blocks.map((b) => ({ ...b }));
+  game.blocks = lv.blocks.map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, rot: b.rot || 0, spin: b.spin || 0 }));
   game.voids = lv.voids.map((v) => ({ ...v }));
+  game.accels = (lv.accels || []).map((a) => ({ x: a.x, y: a.y, w: a.w, h: a.h, dir: a.dir || 0 }));
   game.particles = [];
   game.toast = null;
   message.classList.add("hidden");
@@ -260,7 +276,7 @@ function loadLevelData(lv) {
 }
 
 function resetSaw() {
-  game.saw = { x: game.anchor.x, y: game.anchor.y, vx: 0, vy: 0, angle: 0 };
+  game.saw = { x: game.anchor.x, y: game.anchor.y, vx: 0, vy: 0, angle: 0, accelT: 0, accelDir: 0 };
   game.pull = { x: 0, y: 0 };
   game.aiming = false;
   game.state = "aim";
@@ -288,7 +304,12 @@ function onDown(e) {
   if (game.state !== "aim") return;
   e.preventDefault();
   game.aiming = true;
-  onMove(e);
+  // тянуть можно из любой точки экрана — жест меряем от места касания,
+  // а не от рогатки. Так на телефоне всегда хватает места набрать мощность.
+  game.dragStart = pointerPos(e);
+  game.pull = { x: 0, y: 0 };
+  game.saw.x = game.anchor.x;
+  game.saw.y = game.anchor.y;
 }
 
 function onMove(e) {
@@ -296,12 +317,12 @@ function onMove(e) {
   if (!game.aiming || game.state !== "aim") return;
   e.preventDefault();
   const p = pointerPos(e);
-  let dx = p.x - game.anchor.x;
-  let dy = p.y - game.anchor.y;
+  let dx = p.x - game.dragStart.x;
+  let dy = p.y - game.dragStart.y;
   const d = len(dx, dy);
   if (d > MAX_PULL) { dx = (dx / d) * MAX_PULL; dy = (dy / d) * MAX_PULL; }
   game.pull = { x: dx, y: dy };
-  // пила «оттянута» в точку захвата
+  // пила «оттянута» от рогатки на вектор жеста
   game.saw.x = game.anchor.x + dx;
   game.saw.y = game.anchor.y + dy;
 }
@@ -325,15 +346,18 @@ canvas.addEventListener("mousedown", onDown);
 window.addEventListener("mousemove", onMove);
 window.addEventListener("mouseup", onUp);
 canvas.addEventListener("touchstart", onDown, { passive: false });
-canvas.addEventListener("touchmove", onMove, { passive: false });
-canvas.addEventListener("touchend", onUp, { passive: false });
+window.addEventListener("touchmove", onMove, { passive: false });
+window.addEventListener("touchend", onUp, { passive: false });
 
 // ---------- Редактор уровней ----------
 const editor = {
   active: false,
   tool: "balloon",
-  level: { anchor: { x: 140, y: 330 }, balloons: [], blocks: [], voids: [] },
-  drag: null,   // {x0,y0,x1,y1,kind} во время рисования блока/пустоты
+  level: { anchor: { x: 140, y: 330 }, balloons: [], blocks: [], voids: [], accels: [] },
+  drag: null,   // {x0,y0,x1,y1,kind} во время рисования блока/пустоты/ускорителя
+  sel: null,    // выбранный объект для поворота
+  selType: null,
+  rotating: false,
 };
 const editorUI = document.getElementById("editorUI");
 const hudEl = document.getElementById("hud");
@@ -378,15 +402,44 @@ function editorPointer(phase, e) {
     if (phase === "down") { L.anchor = { x: p.x, y: p.y }; editorRefreshCode(); }
   } else if (tool === "erase") {
     if (phase === "down") { editorErase(p); editorRefreshCode(); }
-  } else if (tool === "block" || tool === "void") {
+  } else if (tool === "block" || tool === "void" || tool === "accel") {
     if (phase === "down") editor.drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, kind: tool };
     else if (phase === "move" && editor.drag) { editor.drag.x1 = p.x; editor.drag.y1 = p.y; }
     else if (phase === "up" && editor.drag) {
       const r = dragToRect(editor.drag), kind = editor.drag.kind;
       editor.drag = null;
-      if (r.w >= 8 && r.h >= 8) { (kind === "block" ? L.blocks : L.voids).push(r); editorRefreshCode(); }
+      if (r.w >= 10 && r.h >= 10) {
+        if (kind === "block") L.blocks.push(r);
+        else if (kind === "void") L.voids.push(r);
+        else { r.dir = -Math.PI / 2; L.accels.push(r); }  // ускоритель: по умолчанию толкает вверх
+        editorRefreshCode();
+      }
+    }
+  } else if (tool === "rotate") {
+    if (phase === "down") editor.sel = pickRotatable(p);
+    else if (phase === "move" && editor.sel) {
+      const o = editor.sel, ang = Math.atan2(p.y - (o.y + o.h / 2), p.x - (o.x + o.w / 2));
+      if (editor.selType === "accel") o.dir = ang; else o.rot = ang;
+      editorRefreshCode();
+    } else if (phase === "up") editor.sel = null;
+  } else if (tool === "spin") {
+    if (phase === "down") {
+      for (let k = L.blocks.length - 1; k >= 0; k--) if (pointInRect(p, L.blocks[k])) {
+        const b = L.blocks[k];
+        b.spin = !b.spin ? 0.05 : b.spin > 0 ? -0.05 : 0;  // выкл → по часовой → против → выкл
+        editorRefreshCode();
+        break;
+      }
     }
   }
+}
+
+// найти блок или ускоритель под точкой (для инструмента «Поворот»)
+function pickRotatable(p) {
+  const L = editor.level;
+  for (let k = L.blocks.length - 1; k >= 0; k--) if (pointInRect(p, L.blocks[k])) { editor.selType = "block"; return L.blocks[k]; }
+  for (let k = L.accels.length - 1; k >= 0; k--) if (pointInRect(p, L.accels[k])) { editor.selType = "accel"; return L.accels[k]; }
+  return null;
 }
 
 function dragToRect(d) {
@@ -400,6 +453,7 @@ function editorErase(p) {
   for (let i = L.balloons.length - 1; i >= 0; i--)
     if (len(L.balloons[i].x - p.x, L.balloons[i].y - p.y) < BALLOON_R + 6) { L.balloons.splice(i, 1); return; }
   for (let i = L.blocks.length - 1; i >= 0; i--) if (pointInRect(p, L.blocks[i])) { L.blocks.splice(i, 1); return; }
+  for (let i = L.accels.length - 1; i >= 0; i--) if (pointInRect(p, L.accels[i])) { L.accels.splice(i, 1); return; }
   for (let i = L.voids.length - 1; i >= 0; i--) if (pointInRect(p, L.voids[i])) { L.voids.splice(i, 1); return; }
 }
 
@@ -423,7 +477,7 @@ function editorLoadFromText() {
 }
 
 function editorClear() {
-  editor.level = { anchor: { x: 140, y: 330 }, balloons: [], blocks: [], voids: [] };
+  editor.level = { anchor: { x: 140, y: 330 }, balloons: [], blocks: [], voids: [], accels: [] };
   editorRefreshCode();
 }
 
@@ -444,7 +498,13 @@ function backToEditor() {
 
 // ---------- Физика ----------
 function update() {
+  if (editor.active) {
+    for (const b of editor.level.blocks) if (b.spin) b.rot += b.spin;
+    if (game.toast && --game.toast.life <= 0) game.toast = null;
+    return;
+  }
   if (game.state === "fly") stepSaw();
+  for (const b of game.blocks) if (b.spin) b.rot += b.spin;
   for (let i = game.particles.length - 1; i >= 0; i--) {
     const p = game.particles[i];
     p.x += p.vx; p.y += p.vy; p.vy += 0.18; p.life -= 1;
@@ -459,6 +519,8 @@ function stepSaw() {
   game.shotFrames++;
 
   s.vy += GRAVITY;
+  // ускоритель: пока таймер активен — толкаем в сохранённую сторону (левитация)
+  if (s.accelT > 0) { s.vx += Math.cos(s.accelDir) * ACCEL_FORCE; s.vy += Math.sin(s.accelDir) * ACCEL_FORCE; s.accelT--; }
   s.vx *= 0.999;
   s.x += s.vx;
   s.y += s.vy;
@@ -471,8 +533,13 @@ function stepSaw() {
   if (s.x > W - SAW_R) { s.x = W - SAW_R; s.vx = -Math.abs(s.vx) * WALL_BOUNCE; }
   if (s.y < SAW_R) { s.y = SAW_R; s.vy = Math.abs(s.vy) * WALL_BOUNCE; }
 
-  // блоки
-  for (const r of game.blocks) collideRect(s, r);
+  // блоки (с учётом поворота)
+  for (const r of game.blocks) collideBlock(s, r);
+
+  // ускорители: влетел в зону — заряжаем толчок на ~0.5 с
+  for (const a of game.accels) {
+    if (s.x > a.x && s.x < a.x + a.w && s.y > a.y && s.y < a.y + a.h) { s.accelT = ACCEL_FRAMES; s.accelDir = a.dir; }
+  }
 
   // шары — пила прорезает их насквозь
   for (const b of game.balloons) {
@@ -532,6 +599,35 @@ function collideRect(s, r) {
     s.vx -= (1 + RESTITUTION) * vn * nx;
     s.vy -= (1 + RESTITUTION) * vn * ny;
   }
+}
+
+// круг (пила) против блока с учётом поворота (OBB)
+function collideBlock(s, b) {
+  if (!b.rot) { collideRect(s, b); return; }
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const ca = Math.cos(-b.rot), sa = Math.sin(-b.rot);
+  // центр пилы в локальной системе блока
+  const lx = (s.x - cx) * ca - (s.y - cy) * sa;
+  const ly = (s.x - cx) * sa + (s.y - cy) * ca;
+  const hw = b.w / 2, hh = b.h / 2;
+  const qx = clamp(lx, -hw, hw), qy = clamp(ly, -hh, hh);
+  const dx = lx - qx, dy = ly - qy;
+  const d2 = dx * dx + dy * dy;
+  if (d2 > SAW_R * SAW_R) return;
+  let nlx, nly, overlap;
+  if (d2 > 0.0001) { const d = Math.sqrt(d2); nlx = dx / d; nly = dy / d; overlap = SAW_R - d; }
+  else {
+    const l = lx + hw, r = hw - lx, t = ly + hh, bm = hh - ly, mn = Math.min(l, r, t, bm);
+    if (mn === l) { nlx = -1; nly = 0; } else if (mn === r) { nlx = 1; nly = 0; }
+    else if (mn === t) { nlx = 0; nly = -1; } else { nlx = 0; nly = 1; }
+    overlap = SAW_R + mn;
+  }
+  // нормаль и выталкивание обратно в мир
+  const wc = Math.cos(b.rot), ws = Math.sin(b.rot);
+  const nx = nlx * wc - nly * ws, ny = nlx * ws + nly * wc;
+  s.x += nx * overlap; s.y += ny * overlap;
+  const vn = s.vx * nx + s.vy * ny;
+  if (vn < 0) { s.vx -= (1 + RESTITUTION) * vn * nx; s.vy -= (1 + RESTITUTION) * vn * ny; }
 }
 
 function popBalloon(b) {
@@ -601,6 +697,7 @@ function render() {
   drawBackground();
   for (const v of game.voids) drawVoid(v.x, v.y, v.w, v.h);
   drawBottomVoid();
+  for (const a of game.accels) drawAccel(a);
   for (const r of game.blocks) drawBlock(r);
   for (const b of game.balloons) if (!b.popped) drawBalloon(b);
   drawParticles();
@@ -617,6 +714,7 @@ function renderEditor() {
   const L = editor.level;
   for (const v of L.voids) drawVoid(v.x, v.y, v.w, v.h);
   drawBottomVoid();
+  for (const a of L.accels) drawAccel(a);
   for (const r of L.blocks) drawBlock(r);
   L.balloons.forEach((b, i) =>
     drawBalloon({ x: b.x, y: b.y, r: BALLOON_R, color: PALETTE[i % PALETTE.length], phase: 0 }));
@@ -628,7 +726,7 @@ function renderEditor() {
     ctx.globalAlpha = 0.65;
     ctx.setLineDash([8, 6]);
     ctx.lineWidth = 2;
-    ctx.strokeStyle = editor.drag.kind === "block" ? "#aab4cf" : "#5a6b8c";
+    ctx.strokeStyle = editor.drag.kind === "void" ? "#5a6b8c" : editor.drag.kind === "accel" ? "#8fe7ff" : "#aab4cf";
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.restore();
   }
@@ -720,15 +818,16 @@ function drawVoidShape(x, y, w, h) {
 
 function drawBlock(r) {
   ctx.save();
-  ctx.translate(r.x, r.y);
+  ctx.translate(r.x + r.w / 2, r.y + r.h / 2);
+  if (r.rot) ctx.rotate(r.rot);
   let g = _blockGrads[r.h];
   if (!g) {
-    g = ctx.createLinearGradient(0, 0, 0, r.h);
+    g = ctx.createLinearGradient(0, -r.h / 2, 0, r.h / 2);
     g.addColorStop(0, "#7d8aa8");
     g.addColorStop(1, "#4a5573");
     _blockGrads[r.h] = g;
   }
-  roundRect(0, 0, r.w, r.h, 8);
+  roundRect(-r.w / 2, -r.h / 2, r.w, r.h, 8);
   ctx.fillStyle = g;
   ctx.fill();
   ctx.lineWidth = 3;
@@ -736,7 +835,42 @@ function drawBlock(r) {
   ctx.stroke();
   // блик сверху
   ctx.fillStyle = "rgba(255,255,255,0.18)";
-  roundRect(4, 4, r.w - 8, Math.min(8, r.h - 8), 4);
+  roundRect(-r.w / 2 + 4, -r.h / 2 + 4, r.w - 8, Math.min(8, r.h - 8), 4);
+  ctx.fill();
+  ctx.restore();
+}
+
+// зона-ускоритель: пульсирующий прямоугольник со стрелкой направления толчка
+function drawAccel(a) {
+  const cx = a.x + a.w / 2, cy = a.y + a.h / 2;
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 250);
+  ctx.save();
+  roundRect(a.x, a.y, a.w, a.h, 10);
+  ctx.fillStyle = "rgba(95,210,255," + (0.1 + 0.07 * pulse).toFixed(3) + ")";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.setLineDash([7, 5]);
+  ctx.strokeStyle = "rgba(130,225,255," + (0.5 + 0.3 * pulse).toFixed(3) + ")";
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // стрелка направления
+  const L = Math.min(a.w, a.h) * 0.32 + 12;
+  const ex = cx + Math.cos(a.dir) * L, ey = cy + Math.sin(a.dir) * L;
+  ctx.strokeStyle = "#8fe7ff";
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(ex, ey);
+  ctx.stroke();
+  ctx.translate(ex, ey);
+  ctx.rotate(a.dir);
+  ctx.beginPath();
+  ctx.moveTo(3, 0);
+  ctx.lineTo(-10, -7);
+  ctx.lineTo(-10, 7);
+  ctx.closePath();
+  ctx.fillStyle = "#8fe7ff";
   ctx.fill();
   ctx.restore();
 }
@@ -846,16 +980,19 @@ function drawSlingshot() {
 }
 
 function drawTrajectory() {
-  // прогноз полёта с реальными отскоками от блоков и стен
-  const s = { x: game.saw.x, y: game.saw.y, vx: -game.pull.x * POWER, vy: -game.pull.y * POWER };
+  // прогноз полёта с реальными отскоками от блоков, стен и ускорителями
+  const s = { x: game.saw.x, y: game.saw.y, vx: -game.pull.x * POWER, vy: -game.pull.y * POWER, accelT: 0, accelDir: 0 };
   ctx.save();
   for (let i = 0; i < PREVIEW_STEPS; i++) {
-    s.vy += GRAVITY; s.vx *= 0.999;
+    s.vy += GRAVITY;
+    if (s.accelT > 0) { s.vx += Math.cos(s.accelDir) * ACCEL_FORCE; s.vy += Math.sin(s.accelDir) * ACCEL_FORCE; s.accelT--; }
+    s.vx *= 0.999;
     s.x += s.vx; s.y += s.vy;
     if (s.x < SAW_R) { s.x = SAW_R; s.vx = Math.abs(s.vx) * WALL_BOUNCE; }
     if (s.x > W - SAW_R) { s.x = W - SAW_R; s.vx = -Math.abs(s.vx) * WALL_BOUNCE; }
     if (s.y < SAW_R) { s.y = SAW_R; s.vy = Math.abs(s.vy) * WALL_BOUNCE; }
-    for (const r of game.blocks) collideRect(s, r);
+    for (const r of game.blocks) collideBlock(s, r);
+    for (const a of game.accels) if (s.x > a.x && s.x < a.x + a.w && s.y > a.y && s.y < a.y + a.h) { s.accelT = ACCEL_FRAMES; s.accelDir = a.dir; }
     // обрыв предпросмотра, если пила ушла бы в пустоту
     let dead = s.y - SAW_R > H;
     for (const v of game.voids) if (s.x > v.x && s.x < v.x + v.w && s.y + SAW_R > v.y) dead = true;
@@ -926,6 +1063,11 @@ fitCanvas();
 window.addEventListener("resize", fitCanvas);
 window.addEventListener("orientationchange", fitCanvas);
 if (blockMQ.addEventListener) blockMQ.addEventListener("change", fitCanvas);
-// есть сохранённый прогресс — предлагаем «Продолжить»
-if (loadProgress() > 0) document.getElementById("startBtn").textContent = "Продолжить";
+// если игрок уже играл (есть прогресс) — сразу продолжаем с его уровня,
+// без стартового окна. На editor.html (есть #editorBtn) меню оставляем.
+if (!document.getElementById("editorBtn") && loadProgress() > 0) {
+  overlay.classList.remove("show");
+  overlay.classList.add("hidden");
+  loadLevel(loadProgress());
+}
 loop();
