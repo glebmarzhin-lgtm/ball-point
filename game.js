@@ -258,6 +258,22 @@ function loadProgress() {
   return clamp(i, 0, LEVELS.length - 1);
 }
 
+// дозагрузка уровней игрока из levels.txt — по одному коду на строку,
+// можно с подписью слева (берём первый код вида A...); строки с # пропускаем.
+async function loadUserLevels() {
+  try {
+    const res = await fetch("levels.txt?cb=" + Date.now());
+    if (!res.ok) return;
+    const text = await res.text();
+    for (let line of text.split("\n")) {
+      line = line.trim();
+      if (!line || line[0] === "#") continue;
+      const m = line.match(/A[0-9a-zABKVRP]{6,}/);
+      if (m) LEVELS.push(m[0]);
+    }
+  } catch (e) { /* локально (file://) fetch недоступен — это нормально */ }
+}
+
 function loadLevelData(lv) {
   game.anchor = { ...lv.anchor };
   game.balloons = lv.balloons.map((b, idx) => ({
@@ -387,6 +403,8 @@ function exitEditorToMenu() {
 
 function editorSetTool(t) {
   editor.tool = t;
+  editor.sel = null;
+  editor.rotating = false;
   for (const btn of document.querySelectorAll(".edtool"))
     btn.classList.toggle("active", btn.dataset.tool === t);
 }
@@ -416,12 +434,12 @@ function editorPointer(phase, e) {
       }
     }
   } else if (tool === "rotate") {
-    if (phase === "down") editor.sel = pickRotatable(p);
-    else if (phase === "move" && editor.sel) {
+    if (phase === "down") { const picked = pickRotatable(p); if (picked) editor.sel = picked; editor.rotating = !!editor.sel; }
+    else if (phase === "move" && editor.rotating && editor.sel) {
       const o = editor.sel, ang = Math.atan2(p.y - (o.y + o.h / 2), p.x - (o.x + o.w / 2));
       if (editor.selType === "accel") o.dir = ang; else o.rot = ang;
       editorRefreshCode();
-    } else if (phase === "up") editor.sel = null;
+    } else if (phase === "up") editor.rotating = false;
   } else if (tool === "spin") {
     if (phase === "down") {
       for (let k = L.blocks.length - 1; k >= 0; k--) if (pointInRect(p, L.blocks[k])) {
@@ -434,11 +452,12 @@ function editorPointer(phase, e) {
   }
 }
 
-// найти блок или ускоритель под точкой (для инструмента «Поворот»)
+// найти блок или ускоритель рядом с точкой (для инструмента «Поворот»)
 function pickRotatable(p) {
   const L = editor.level;
-  for (let k = L.blocks.length - 1; k >= 0; k--) if (pointInRect(p, L.blocks[k])) { editor.selType = "block"; return L.blocks[k]; }
-  for (let k = L.accels.length - 1; k >= 0; k--) if (pointInRect(p, L.accels[k])) { editor.selType = "accel"; return L.accels[k]; }
+  const near = (o) => len(p.x - (o.x + o.w / 2), p.y - (o.y + o.h / 2)) < Math.max(o.w, o.h) / 2 + 38;
+  for (let k = L.blocks.length - 1; k >= 0; k--) if (near(L.blocks[k])) { editor.selType = "block"; return L.blocks[k]; }
+  for (let k = L.accels.length - 1; k >= 0; k--) if (near(L.accels[k])) { editor.selType = "accel"; return L.accels[k]; }
   return null;
 }
 
@@ -730,7 +749,48 @@ function renderEditor() {
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.restore();
   }
+  drawRotateHandle();
+  drawEditorHint();
   if (game.toast) drawToast();
+}
+
+// жёлтое кольцо с ручкой вокруг выбранного объекта — наглядно показывает поворот
+function drawRotateHandle() {
+  if (editor.tool !== "rotate" || !editor.sel) return;
+  const o = editor.sel, cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+  const ang = editor.selType === "accel" ? (o.dir || 0) : (o.rot || 0);
+  const R = Math.max(o.w, o.h) / 2 + 20;
+  ctx.save();
+  ctx.strokeStyle = "#ffd23f";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+  ctx.setLineDash([]);
+  const hx = cx + Math.cos(ang) * R, hy = cy + Math.sin(ang) * R;
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(hx, hy); ctx.stroke();
+  ctx.beginPath(); ctx.arc(hx, hy, 10, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffd23f"; ctx.fill();
+  ctx.restore();
+}
+
+const EDITOR_HINTS = {
+  rotate: "🔄 Нажми на блок/ускоритель и веди пальцем вокруг — повернётся на любой угол",
+  spin: "🌀 Тап по блоку: включить вращение → в другую сторону → выключить",
+  accel: "🚀 Нарисуй зону, затем инструментом «Поворот» задай направление толчка",
+};
+function drawEditorHint() {
+  const t = EDITOR_HINTS[editor.tool];
+  if (!t) return;
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.font = "600 15px ui-rounded, -apple-system, system-ui, sans-serif";
+  const w = ctx.measureText(t).width + 32;
+  ctx.fillStyle = "rgba(10,14,22,0.8)";
+  roundRect(W / 2 - w / 2, 58, w, 36, 12);
+  ctx.fill();
+  ctx.fillStyle = "#e9eefc";
+  ctx.fillText(t, W / 2, 81);
+  ctx.restore();
 }
 
 function drawEditorGrid() {
@@ -1063,11 +1123,16 @@ fitCanvas();
 window.addEventListener("resize", fitCanvas);
 window.addEventListener("orientationchange", fitCanvas);
 if (blockMQ.addEventListener) blockMQ.addEventListener("change", fitCanvas);
-// если игрок уже играл (есть прогресс) — сразу продолжаем с его уровня,
-// без стартового окна. На editor.html (есть #editorBtn) меню оставляем.
-if (!document.getElementById("editorBtn") && loadProgress() > 0) {
-  overlay.classList.remove("show");
-  overlay.classList.add("hidden");
-  loadLevel(loadProgress());
-}
 loop();
+
+// сначала дозагружаем уровни игрока из levels.txt, затем авто-продолжение
+// (чтобы прогресс на пользовательских уровнях считался правильно).
+// На editor.html (есть #editorBtn) стартовое меню всегда оставляем.
+(async function init() {
+  await loadUserLevels();
+  if (!document.getElementById("editorBtn") && loadProgress() > 0) {
+    overlay.classList.remove("show");
+    overlay.classList.add("hidden");
+    loadLevel(loadProgress());
+  }
+})();
