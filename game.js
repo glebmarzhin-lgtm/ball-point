@@ -368,14 +368,31 @@ const editor = {
   tool: "balloon",
   level: { anchor: { x: 140, y: 330 }, balloons: [], blocks: [], voids: [], accels: [] },
   drag: null,   // {x0,y0,x1,y1,kind} во время рисования блока/пустоты/ускорителя
-  sel: null,    // выбранный объект для поворота
+  sel: null,    // выбранный объект (угол/кручение крутим ползунками)
   selType: null,
-  rotating: false,
 };
 const editorUI = document.getElementById("editorUI");
 const hudEl = document.getElementById("hud");
 const backToEdBtn = document.getElementById("backToEdBtn");
 const edText = document.getElementById("edText");
+const edRotPanel = document.getElementById("edRotPanel");
+const edAngle = document.getElementById("edAngle");
+const edSpin = document.getElementById("edSpin");
+const edRotLabel = document.getElementById("edRotLabel");
+const edSpinWrap = document.getElementById("edSpinWrap");
+if (edAngle) {
+  edAngle.addEventListener("input", () => {
+    if (!editor.sel) return;
+    const a = (+edAngle.value) * Math.PI / 180;
+    if (editor.selType === "accel") editor.sel.dir = a; else editor.sel.rot = a;
+    editorRefreshCode();
+  });
+  edSpin.addEventListener("input", () => {
+    if (!editor.sel || editor.selType !== "block") return;
+    editor.sel.spin = (+edSpin.value) * 0.0075;
+    editorRefreshCode();
+  });
+}
 
 function enterEditor() {
   overlay.classList.add("hidden"); overlay.classList.remove("show");
@@ -383,6 +400,8 @@ function enterEditor() {
   game.testing = false;
   editor.active = true;
   editor.drag = null;
+  editor.sel = null;
+  syncRotPanel();
   game.state = "editor";
   editorUI.classList.remove("hidden");
   hudEl.classList.add("hidden");
@@ -401,7 +420,7 @@ function exitEditorToMenu() {
 function editorSetTool(t) {
   editor.tool = t;
   editor.sel = null;
-  editor.rotating = false;
+  syncRotPanel();
   for (const btn of document.querySelectorAll(".edtool"))
     btn.classList.toggle("active", btn.dataset.tool === t);
 }
@@ -431,21 +450,8 @@ function editorPointer(phase, e) {
       }
     }
   } else if (tool === "rotate") {
-    if (phase === "down") { const picked = pickRotatable(p); if (picked) editor.sel = picked; editor.rotating = !!editor.sel; }
-    else if (phase === "move" && editor.rotating && editor.sel) {
-      const o = editor.sel, ang = Math.atan2(p.y - (o.y + o.h / 2), p.x - (o.x + o.w / 2));
-      if (editor.selType === "accel") o.dir = ang; else o.rot = ang;
-      editorRefreshCode();
-    } else if (phase === "up") editor.rotating = false;
-  } else if (tool === "spin") {
-    if (phase === "down") {
-      for (let k = L.blocks.length - 1; k >= 0; k--) if (pointInRect(p, L.blocks[k])) {
-        const b = L.blocks[k];
-        b.spin = !b.spin ? 0.05 : b.spin > 0 ? -0.05 : 0;  // выкл → по часовой → против → выкл
-        editorRefreshCode();
-        break;
-      }
-    }
+    // тап выбирает объект; угол и кручение задаются ползунками внизу
+    if (phase === "down") { editor.sel = pickRotatable(p); syncRotPanel(); }
   }
 }
 
@@ -455,7 +461,21 @@ function pickRotatable(p) {
   const near = (o) => len(p.x - (o.x + o.w / 2), p.y - (o.y + o.h / 2)) < Math.max(o.w, o.h) / 2 + 38;
   for (let k = L.blocks.length - 1; k >= 0; k--) if (near(L.blocks[k])) { editor.selType = "block"; return L.blocks[k]; }
   for (let k = L.accels.length - 1; k >= 0; k--) if (near(L.accels[k])) { editor.selType = "accel"; return L.accels[k]; }
+  editor.selType = null;
   return null;
+}
+
+// показать/обновить ползунки угла и кручения для выбранного объекта
+function syncRotPanel() {
+  if (!edRotPanel) return;
+  if (!editor.sel) { edRotPanel.classList.add("hidden"); return; }
+  const o = editor.sel, isAccel = editor.selType === "accel";
+  edRotPanel.classList.remove("hidden");
+  edRotLabel.textContent = isAccel ? "🚀 направление" : "🧱 блок";
+  const ang = isAccel ? (o.dir || 0) : (o.rot || 0);
+  edAngle.value = ((Math.round(ang * 180 / Math.PI) % 360) + 360) % 360;
+  edSpinWrap.style.display = isAccel ? "none" : "";
+  edSpin.value = isAccel ? 0 : Math.round((o.spin || 0) / 0.0075);
 }
 
 function dragToRect(d) {
@@ -515,12 +535,12 @@ function backToEditor() {
 // ---------- Физика ----------
 function update() {
   if (editor.active) {
-    for (const b of editor.level.blocks) if (b.spin) b.rot += b.spin;
+    for (const b of editor.level.blocks) if (b.spin) b.rot = (b.rot + b.spin) % (Math.PI * 2);
     if (game.toast && --game.toast.life <= 0) game.toast = null;
     return;
   }
   if (game.state === "fly") stepSaw();
-  for (const b of game.blocks) if (b.spin) b.rot += b.spin;
+  for (const b of game.blocks) if (b.spin) b.rot = (b.rot + b.spin) % (Math.PI * 2);
   for (let i = game.particles.length - 1; i >= 0; i--) {
     const p = game.particles[i];
     p.x += p.vx; p.y += p.vy; p.vy += 0.18; p.life -= 1;
@@ -532,7 +552,6 @@ function update() {
 
 function stepSaw() {
   const s = game.saw;
-  game.shotFrames++;
 
   s.vy += GRAVITY;
   // ускоритель: пока таймер активен — толкаем в сохранённую сторону (левитация)
@@ -574,12 +593,9 @@ function stepSaw() {
   // победа
   if (game.balloons.every((b) => b.popped)) { winLevel(); return; }
 
-  // пила почти остановилась — конец броска
+  // пила почти остановилась / сильно замедлилась — конец броска
   if (speed < 0.55) { if (++game.restFrames > 45) endShot(); }
   else game.restFrames = 0;
-
-  // страховка от бесконечного полёта
-  if (game.shotFrames > 60 * 14) endShot();
 }
 
 // круг (пила) против прямоугольника (блок)
@@ -771,9 +787,8 @@ function drawRotateHandle() {
 }
 
 const EDITOR_HINTS = {
-  rotate: "🔄 Нажми на блок/ускоритель и веди пальцем вокруг — повернётся на любой угол",
-  spin: "🌀 Тап по блоку: включить вращение → в другую сторону → выключить",
-  accel: "🚀 Нарисуй зону, затем инструментом «Поворот» задай направление толчка",
+  rotate: "🔄 Тапни блок или ускоритель — внизу появятся ползунки «Угол» и «Кручение»",
+  accel: "🚀 Нарисуй зону. Куда толкать — задаётся инструментом «Поворот» (ползунок)",
 };
 function drawEditorHint() {
   const t = EDITOR_HINTS[editor.tool];
